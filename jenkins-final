@@ -5,90 +5,89 @@ pipeline {
     environment {
         SONARQUBE = 'sonar'
         JAR_NAME = 'datastore-0.0.7.jar'
+        SPRING_DATASOURCE_URL = 'jdbc:mysql://database-2.c47808iic91o.us-east-1.rds.amazonaws.com:3306/datastore'
+        SPRING_DATASOURCE_USERNAME = 'root'
+        SPRING_DATASOURCE_PASSWORD = 'shivakumar'
+        APP_PORT = '8084'
     }
 
     stages {
 
-        stage('SCM') {
+        stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/CloudTechDevOps/Java-springboot-project.git'
             }
         }
 
-        stage('Clean') {
+        stage('Clean & Build') {
             steps {
-                sh 'mvn clean'
+                sh 'mvn clean package -Dspring.profiles.active=build -DskipTests'
             }
         }
 
-        stage('Code Quality') {
+        stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv(SONARQUBE) {
-                    sh 'mvn clean package -Dspring.profiles.active=build'
-                    sh 'mvn sonar:sonar'
+                    sh 'mvn sonar:sonar -DskipTests'
                 }
             }
         }
 
-        stage('Quality Gate') {
+        stage('SonarQube Quality Gate') {
             steps {
                 script {
                     def qg = waitForQualityGate()
-                    echo "Quality Gate Response: ${qg}"
-
+                    echo "Quality Gate Status: ${qg.status}"
                     if (qg.status != 'OK') {
-                        error "❌ Pipeline failed due to not meeting SonarQube Quality Gate requirements."
-                    } else {
-                        echo "✅ Quality Gate Passed!"
+                        error "❌ SonarQube Quality Gate failed."
                     }
                 }
             }
         }
 
-        stage('Build Package') {
+        stage('Deploy Backend') {
             steps {
-                sh 'mvn clean package -Dspring.profiles.active=build'
+                sh """
+                # Kill existing backend process if running
+                pkill -f "java.*${WORKSPACE}/target/${JAR_NAME}" || true
+
+                # Ensure logs folder exists
+                mkdir -p ${WORKSPACE}/logs
+
+                # Export database credentials
+                export SPRING_DATASOURCE_URL=${SPRING_DATASOURCE_URL}
+                export SPRING_DATASOURCE_USERNAME=${SPRING_DATASOURCE_USERNAME}
+                export SPRING_DATASOURCE_PASSWORD=${SPRING_DATASOURCE_PASSWORD}
+
+                # Start backend in the background
+                nohup java -jar ${WORKSPACE}/target/${JAR_NAME} > ${WORKSPACE}/logs/nohup.out 2>&1 &
+
+                # Wait for backend to start
+                attempts=0
+                until curl -s http://localhost:${APP_PORT}/actuator/health || [ \$attempts -ge 6 ]; do
+                    echo "Waiting for backend to start..."
+                    sleep 5
+                    attempts=\$((attempts+1))
+                done
+
+                if [ \$attempts -ge 6 ]; then
+                    echo "❌ Backend failed to start. Last 50 log lines:"
+                    tail -n 50 ${WORKSPACE}/logs/nohup.out
+                    exit 1
+                fi
+
+                echo "✅ Backend is running on port ${APP_PORT}"
+                """
             }
         }
-
-       stage('Copy JAR to Workspace Directory') {
-         steps {
-        sh '''
-        mkdir -p ${WORKSPACE}/logs
-        cp target/${JAR_NAME} ${WORKSPACE}/${JAR_NAME}
-        chmod 755 ${WORKSPACE}/${JAR_NAME}
-        '''
-              }
-}
-
-
-        stage('Run Application') {
-    steps {
-        sh '''
-        # Stop any previously running instance of the app
-        pkill -f ${WORKSPACE}/${JAR_NAME} || true
-
-        # Ensure logs directory exists
-        mkdir -p ${WORKSPACE}/logs
-
-        # Run the application in background with environment variables
-        MYSQL_HOST="jdbc:mysql://database-1.crk2sca6elfu.us-east-1.rds.amazonaws.com:3306/datastore?createDatabaseIfNotExist=true" \
-        MYSQL_USERNAME="admin" \
-        MYSQL_PASSWORD="Cloud123" \
-        nohup java -jar ${WORKSPACE}/${JAR_NAME} > ${WORKSPACE}/logs/nohup.out 2>&1 &
-        '''
-    }
-}
-
     }
 
     post {
         success {
-            echo '🎉 Build, SonarQube check, deployment & application start completed successfully.'
+            echo "🎉 Backend build, SonarQube check, and deployment completed successfully."
         }
         failure {
-            echo '❌ Build or SonarQube Quality Gate validation failed.'
+            echo "❌ Pipeline failed — check build logs, SonarQube results, or backend logs."
         }
     }
 }
-
