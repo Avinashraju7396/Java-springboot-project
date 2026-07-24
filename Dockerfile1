@@ -4,7 +4,7 @@ FROM maven:3.9.9-amazoncorretto-11
 # Set working directory
 WORKDIR /app
 
-# Copy source code into the container
+# Copy source code into the container 
 COPY . .        
 
 #COPY . /app
