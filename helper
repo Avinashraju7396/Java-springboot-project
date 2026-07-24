@@ -5,7 +5,7 @@ git push -u -f origin master
 ./mvnw compile -> Compiles source code and converts .java files to .class files.
 ./mvnw test -> Executes test cases.
 ./mvnw package -> Creates jar file.
-
+ 
 ./mvnw dependency:tree -> It displays dependencies in tree format.
 ./mvnw clean -> Removes target directory.
 
